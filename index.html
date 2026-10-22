@@ -102,6 +102,14 @@ h1 span { color: var(--accent); display: inline-block; transform: rotate(-4deg);
 .viewfinder.found .frame { opacity: 0; }
 /* Une fois le QR trouvé, le viseur devient « touchable » pour zoomer / dézoomer */
 .viewfinder.found { cursor: zoom-out; }
+/* Barre de zoom : − [curseur] + ×2.0 */
+.zoombar { display: flex; align-items: center; gap: 10px; margin-top: -8px; }
+.zoombar button { width: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 1.3rem; line-height: 1; flex: none; }
+.zoombar input { flex: 1; min-width: 0; accent-color: var(--accent); height: 32px; }
+.zoombar output { font: 500 .85rem var(--f-mono); color: var(--muted); width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+/* Pendant le live, on empêche le navigateur de zoomer la page quand on pince le viseur */
+.viewfinder.live { touch-action: none; }
+.viewfinder video { transform-origin: center; }
 .zoom-hint {
   position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
   font: 500 .78rem var(--f-body); color: #e9ecf5; white-space: nowrap;
@@ -200,6 +208,14 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
     </div>
     <div class="frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     <span class="zoom-hint" id="zoomHint" hidden>Toucher pour dézoomer</span>
+  </div>
+
+  <!-- Zoom de la caméra (visible seulement en live) -->
+  <div class="zoombar" id="zoombar" hidden>
+    <button type="button" id="zoomOut" aria-label="Dézoomer">−</button>
+    <input type="range" id="zoom" min="1" max="4" step="0.1" value="1" aria-label="Zoom de la caméra">
+    <button type="button" id="zoomIn" aria-label="Zoomer">+</button>
+    <output id="zoomVal" for="zoom">×1.0</output>
   </div>
 
   <div class="actions">
@@ -633,6 +649,8 @@ async function startCamera() {
   await video.play();
   idle.hidden = true;
   vf.prepend(video);
+  vf.classList.add("live");
+  setupZoom();
   startScanFx();
   $("live").textContent = "Arrêter";
   setStatus("Vise le QR code…");
@@ -656,7 +674,21 @@ async function scanLoop() {
   }
   if (video.readyState >= 2) {
     const vw = video.videoWidth, vh = video.videoHeight;
-    const res = await decode(video, vw, vh, 480); // image réduite = analyse plus légère
+    let res;
+    if (zoom.hardware || zoom.level <= 1) {
+      // Zoom matériel (ou pas de zoom) : l'image de la caméra est déjà « zoomée »
+      res = await decode(video, vw, vh, 480);     // image réduite = analyse plus légère
+    } else {
+      // Zoom numérique : on n'analyse QUE la zone visible au centre, sans la réduire.
+      // Le QR y paraît plus gros, donc il est plus facile à lire.
+      const side = Math.min(vw, vh) / zoom.level;
+      const sx = (vw - side) / 2, sy = (vh - side) / 2;
+      cropC.width = cropC.height = Math.round(side);
+      cropC.getContext("2d").drawImage(video, sx, sy, side, side, 0, 0, cropC.width, cropC.height);
+      res = await decode(cropC, cropC.width, cropC.height, 800);
+      // Les coins trouvés sont dans le morceau découpé : on les replace dans l'image entière
+      if (res) res.points = res.points.map((p) => ({ x: p.x + sx, y: p.y + sy }));
+    }
     if (res && looping) {
       // On « photographie » l'image vidéo exacte où le QR a été lu, pour la figer
       const snap = document.createElement("canvas");
@@ -673,12 +705,82 @@ async function scanLoop() {
   setTimeout(scanLoop, 250);
 }
 
+/* =====================================================================
+   ZOOM AVANT DÉTECTION
+   Deux façons de zoomer :
+   - zoom MATÉRIEL : on demande au capteur de zoomer (applyConstraints).
+     C'est le meilleur, car l'image garde tous ses détails. Chrome Android le permet
+     sur la plupart des téléphones.
+   - zoom NUMÉRIQUE (si le téléphone ne sait pas) : on agrandit la vidéo en CSS
+     et on n'analyse que le centre de l'image.
+   ===================================================================== */
+const zoom = { level: 1, min: 1, max: 4, hardware: false, track: null };
+const cropC = document.createElement("canvas");   // canvas pour le morceau découpé
+
+function setupZoom() {
+  zoom.track = stream.getVideoTracks()[0];
+  // getCapabilities() dit ce que la caméra sait faire, dont le zoom (min, max, pas)
+  const caps = zoom.track.getCapabilities ? zoom.track.getCapabilities() : {};
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    zoom.hardware = true;
+    zoom.min = caps.zoom.min;
+    zoom.max = Math.min(caps.zoom.max, 10);         // au-delà de ×10 l'image tremble trop
+  } else {
+    zoom.hardware = false;
+    zoom.min = 1;
+    zoom.max = 4;
+  }
+  const r = $("zoom");
+  r.min = zoom.min; r.max = zoom.max; r.step = 0.1;
+  setZoom(zoom.min);
+  $("zoombar").hidden = false;
+}
+
+function setZoom(z) {
+  z = Math.min(zoom.max, Math.max(zoom.min, z));
+  zoom.level = z;
+  $("zoom").value = z;
+  $("zoomVal").textContent = "×" + z.toFixed(1);
+  if (zoom.hardware) {
+    zoom.track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
+  } else if (video) {
+    video.style.transform = `scale(${z})`;          // agrandit l'image depuis son centre
+  }
+  scanStarted = Date.now();                        // on bouge le zoom = on est là : pas de mise en pause
+}
+
+$("zoom").addEventListener("input", (e) => setZoom(parseFloat(e.target.value)));
+$("zoomIn").addEventListener("click", () => setZoom(zoom.level * 1.25));
+$("zoomOut").addEventListener("click", () => setZoom(zoom.level / 1.25));
+
+/* Pincer le viseur avec deux doigts pour zoomer, comme dans l'appareil photo.
+   On suit chaque doigt (pointerId) ; le rapport entre l'écart actuel des deux doigts
+   et l'écart au début du geste donne le facteur de zoom. */
+const fingers = new Map();
+let pinch = null;
+const gap = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+vf.addEventListener("pointerdown", (e) => {
+  if (!looping) return;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (fingers.size === 2) pinch = { start: gap(), level: zoom.level };
+});
+vf.addEventListener("pointermove", (e) => {
+  if (!fingers.has(e.pointerId)) return;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && fingers.size === 2) setZoom(pinch.level * (gap() / pinch.start));
+});
+const lift = (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; };
+vf.addEventListener("pointerup", lift);
+vf.addEventListener("pointercancel", lift);
+
 function stopCamera() {
   looping = false;
   if (stream) stream.getTracks().forEach((t) => t.stop());   // éteint vraiment la caméra
   stream = null;
   video?.remove();
   video = null;
+  vf.classList.remove("live");
+  $("zoombar").hidden = true;
   stopScanFx();
   $("live").textContent = "Caméra live";
 }
