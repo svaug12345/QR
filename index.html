@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0c1120">
 <title>Lecteur QR</title>
+<!-- Manifeste = la « carte d'identité » de l'appli (nom, icônes, plein écran) -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=Figtree:wght@400;500;600&display=swap">
 
@@ -720,6 +724,11 @@ renderHistory();
 
 // Au chargement : la caméra live démarre toute seule
 startCamera();
+
+// Enregistre le service worker (sw.js) : rend l'appli installable et utilisable hors ligne
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => { /* pas grave si ça échoue */ });
+}
 </script>
 </body>
 </html>
