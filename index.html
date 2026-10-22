@@ -100,6 +100,13 @@ h1 span { color: var(--accent); display: inline-block; transform: rotate(-4deg);
 @keyframes breathe { 50% { inset: 21%; } }
 /* Quand le code est trouvé, on cache le cadre fixe : l'encadrement se fait autour du vrai QR */
 .viewfinder.found .frame { opacity: 0; }
+/* Une fois le QR trouvé, le viseur devient « touchable » pour zoomer / dézoomer */
+.viewfinder.found { cursor: zoom-out; }
+.zoom-hint {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  font: 500 .78rem var(--f-body); color: #e9ecf5; white-space: nowrap;
+  background: rgba(5, 8, 15, .7); padding: 5px 12px; border-radius: 999px; pointer-events: none;
+}
 /* Ligne de balayage */
 .scanline {
   position: absolute; left: 18%; right: 18%; height: 3px; top: 18%; border-radius: 3px;
@@ -178,7 +185,7 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
 <div class="app">
   <header>
     <h1>Lecteur <span>QR</span></h1>
-    <button class="sound" id="sound" type="button" aria-pressed="true">son : oui</button>
+    <button class="sound" id="sound" type="button" aria-pressed="false">son : non</button>
   </header>
 
   <div class="viewfinder" id="vf">
@@ -192,6 +199,7 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
       <span>Démarrage de la caméra…</span>
     </div>
     <div class="frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <span class="zoom-hint" id="zoomHint" hidden>Toucher pour dézoomer</span>
   </div>
 
   <div class="actions">
@@ -311,6 +319,9 @@ function resetView() {
   stage.innerHTML = "";
   stage.style.transform = "";
   vf.classList.remove("found", "nope");
+  view = null;
+  $("zoomHint").hidden = true;
+  $("zoomHint").textContent = "Toucher pour dézoomer";
   sizeOverlay();
   octx.clearRect(0, 0, overlay.width, overlay.height);
 }
@@ -338,8 +349,111 @@ function setStatus(msg, isError = false) {
    el = l'image figée (déjà dans la scène), iw/ih = sa taille, pts = coins du QR
    ===================================================================== */
 const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2); // léger rebond
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2); // doux au début et à la fin
 const CONFETTI = ["#ffcf3f", "#ff6b9a", "#6f8bff", "#4cc58f", "#7fe0ff", "#ff9f43"];
 
+/* « view » garde tout ce qu'il faut pour redessiner la scène à n'importe quel niveau de zoom :
+   P = coins du QR à l'écran (sans zoom), k = zoom maximal, tx/ty = décalage au zoom maximal,
+   e = où on en est entre « pas zoomé » (0) et « zoomé » (1). */
+let view = null;
+let particles = null;
+
+/**
+ * Dessine toute la scène pour une progression de zoom e (0 → 1).
+ * showLabel : afficher l'étiquette « Trouvé ! » (0 = cachée, 1 = visible, entre les deux = apparition)
+ */
+function drawScene(e, showLabel, pulse) {
+  const { P, k, tx, ty, W, H, ok, pop } = view;
+  const z = 1 + (k - 1) * e;                // zoom courant
+  const dx = tx * e, dy = ty * e;           // translation courante
+
+  // Le zoom de l'image se fait en CSS (fluide, géré par la carte graphique)
+  stage.style.transform = `translate(${dx}px, ${dy}px) scale(${z})`;
+
+  // Les coins suivent la même transformation : point écran = point × zoom + translation
+  const Q = P.map((p) => ({ x: p.x * z + dx, y: p.y * z + dy }));
+  octx.clearRect(0, 0, W, H);
+
+  // a) Voile sombre partout SAUF sur le QR (règle « evenodd » = on troue le rectangle)
+  octx.beginPath();
+  octx.rect(0, 0, W, H);
+  Q.forEach((p, i) => (i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)));
+  octx.closePath();
+  octx.fillStyle = "rgba(5, 8, 15, 0.6)";
+  octx.fill("evenodd");
+
+  // b) Contour du QR, avec un halo (plus ou moins fort selon « pulse »)
+  octx.save();
+  octx.beginPath();
+  Q.forEach((p, i) => (i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)));
+  octx.closePath();
+  octx.lineJoin = "round";
+  octx.strokeStyle = ok;
+  octx.lineWidth = 3;
+  octx.shadowColor = ok;
+  octx.shadowBlur = 8 + 12 * pulse;
+  octx.stroke();
+  octx.restore();
+
+  // c) Gros coins façon viseur, posés sur les 4 coins du QR, un peu à l'extérieur
+  const qc = { x: Q.reduce((a, p) => a + p.x, 0) / 4, y: Q.reduce((a, p) => a + p.y, 0) / 4 };
+  octx.strokeStyle = ok;
+  octx.lineWidth = 5;
+  octx.lineCap = "round";
+  Q.forEach((p, i) => {
+    const c = { x: p.x + (p.x - qc.x) * 0.08, y: p.y + (p.y - qc.y) * 0.08 }; // écarté de 8 %
+    const prev = Q[(i + 3) % 4], next = Q[(i + 1) % 4];
+    const arm = 0.22; // longueur des « bras » = 22 % du côté
+    octx.beginPath();
+    octx.moveTo(c.x + (prev.x - p.x) * arm, c.y + (prev.y - p.y) * arm);
+    octx.lineTo(c.x, c.y);
+    octx.lineTo(c.x + (next.x - p.x) * arm, c.y + (next.y - p.y) * arm);
+    octx.stroke();
+  });
+
+  // d) Étiquette « Trouvé ! » au-dessus du QR
+  if (showLabel > 0) {
+    const top = Math.min(...Q.map((p) => p.y));
+    const ly = Math.max(26, top - 22) - 14 * (1 - easeOutBack(showLabel));
+    octx.save();
+    octx.globalAlpha = showLabel;
+    octx.font = "800 16px 'Bricolage Grotesque', sans-serif";
+    const label = "Trouvé !";
+    const tw = octx.measureText(label).width + 24;
+    octx.translate(qc.x, ly);
+    octx.rotate(-0.06);                       // légèrement penchée, pour le côté fun
+    octx.fillStyle = pop;
+    octx.beginPath();
+    octx.roundRect(-tw / 2, -15, tw, 30, 15);
+    octx.fill();
+    octx.fillStyle = "#141a2b";
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    octx.fillText(label, 0, 1);
+    octx.restore();
+  }
+
+  // e) Confettis (seulement pendant l'animation d'arrivée)
+  if (particles) {
+    for (const p of particles) {
+      p.vy += 0.15;                 // gravité
+      p.vx *= 0.985;                // frottement de l'air
+      p.x += p.vx; p.y += p.vy; p.r += p.vr;
+      p.life -= 0.008;
+      if (p.life <= 0) continue;
+      octx.save();
+      octx.globalAlpha = Math.min(1, p.life * 2);
+      octx.translate(p.x, p.y);
+      octx.rotate(p.r);
+      octx.fillStyle = p.c;
+      octx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      octx.restore();
+    }
+  }
+  return qc;
+}
+
+/* L'animation « Trouvé ! » : el = l'image figée (déjà dans la scène), iw/ih = sa taille, pts = coins du QR */
 function celebrate(el, iw, ih, pts) {
   vf.classList.add("found");
   sizeOverlay();
@@ -355,130 +469,69 @@ function celebrate(el, iw, ih, pts) {
 
   // 2) Zoom visé : le QR doit occuper ~60 % du viseur (entre ×1 et ×5)
   const k = Math.min(5, Math.max(1, (0.6 * W) / size));
-  // Translation pour amener le centre du QR au centre du viseur, après zoom
-  const tx = W / 2 - cx * k, ty = H / 2 - cy * k;
+  const css = getComputedStyle(document.documentElement);
+  view = {
+    P, k, W, H,
+    tx: W / 2 - cx * k, ty: H / 2 - cy * k,  // amène le centre du QR au centre du viseur
+    ok: css.getPropertyValue("--ok").trim() || "#4cc58f",
+    pop: css.getPropertyValue("--pop").trim() || "#ffcf3f",
+    e: 1,
+  };
+  particles = null;
+  $("zoomHint").hidden = k < 1.15;           // zoom inutile si le QR remplit déjà l'image
 
-  const ok = getComputedStyle(document.documentElement).getPropertyValue("--ok").trim() || "#4cc58f";
-  const pop = getComputedStyle(document.documentElement).getPropertyValue("--pop").trim() || "#ffcf3f";
   const ZOOM_MS = reducedMotion ? 0 : 700;
   const t0 = performance.now();
-  let particles = null;
-
   function frame(now) {
     const elapsed = now - t0;
     const t = ZOOM_MS ? Math.min(1, elapsed / ZOOM_MS) : 1;
-    const e = easeOutBack(t);                 // progression avec rebond (0 → 1)
-    const z = 1 + (k - 1) * e;                // zoom courant
-    const dx = tx * e, dy = ty * e;           // translation courante
-
-    // Le zoom de l'image se fait en CSS (fluide, géré par la carte graphique)
-    stage.style.transform = `translate(${dx}px, ${dy}px) scale(${z})`;
-
-    // Les coins suivent la même transformation : point écran = point × zoom + translation
-    const Q = P.map((p) => ({ x: p.x * z + dx, y: p.y * z + dy }));
-    octx.clearRect(0, 0, W, H);
-
-    // a) Voile sombre partout SAUF sur le QR (règle « evenodd » = on troue le rectangle)
-    octx.beginPath();
-    octx.rect(0, 0, W, H);
-    Q.forEach((p, i) => (i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)));
-    octx.closePath();
-    octx.fillStyle = `rgba(5, 8, 15, ${0.6 * Math.min(1, t * 1.5)})`;
-    octx.fill("evenodd");
-
-    // b) Contour du QR qui « pulse » doucement
-    const pulse = 0.5 + 0.5 * Math.sin(elapsed / 180);
-    octx.save();
-    octx.beginPath();
-    Q.forEach((p, i) => (i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)));
-    octx.closePath();
-    octx.lineJoin = "round";
-    octx.strokeStyle = ok;
-    octx.lineWidth = 3;
-    octx.shadowColor = ok;
-    octx.shadowBlur = 8 + 12 * pulse;
-    octx.stroke();
-    octx.restore();
-
-    // c) Gros coins façon viseur, posés sur les 4 coins du QR, un peu à l'extérieur
-    const qc = { x: Q.reduce((a, p) => a + p.x, 0) / 4, y: Q.reduce((a, p) => a + p.y, 0) / 4 };
-    octx.strokeStyle = ok;
-    octx.lineWidth = 5;
-    octx.lineCap = "round";
-    Q.forEach((p, i) => {
-      // on écarte chaque coin du centre de 8 %
-      const c = { x: p.x + (p.x - qc.x) * 0.08, y: p.y + (p.y - qc.y) * 0.08 };
-      const prev = Q[(i + 3) % 4], next = Q[(i + 1) % 4];
-      const arm = 0.22; // longueur des « bras » = 22 % du côté
-      octx.beginPath();
-      octx.moveTo(c.x + (prev.x - p.x) * arm, c.y + (prev.y - p.y) * arm);
-      octx.lineTo(c.x, c.y);
-      octx.lineTo(c.x + (next.x - p.x) * arm, c.y + (next.y - p.y) * arm);
-      octx.stroke();
-    });
-
-    // d) Étiquette « Trouvé ! » qui tombe au-dessus du QR une fois le zoom fini
-    if (t >= 1) {
-      const lt = Math.min(1, (elapsed - ZOOM_MS) / 350);
-      const top = Math.min(...Q.map((p) => p.y));
-      const ly = Math.max(26, top - 22) - 14 * (1 - easeOutBack(lt));
-      octx.save();
-      octx.globalAlpha = lt;
-      octx.font = "800 16px 'Bricolage Grotesque', sans-serif";
-      const label = "Trouvé !";
-      const tw = octx.measureText(label).width + 24;
-      octx.translate(qc.x, ly);
-      octx.rotate(-0.06);                       // légèrement penchée, pour le côté fun
-      octx.fillStyle = pop;
-      octx.beginPath();
-      octx.roundRect(-tw / 2, -15, tw, 30, 15);
-      octx.fill();
-      octx.fillStyle = "#141a2b";
-      octx.textAlign = "center";
-      octx.textBaseline = "middle";
-      octx.fillText(label, 0, 1);
-      octx.restore();
-
-      // e) Confettis : créés une seule fois, au centre du QR
-      if (!particles && !reducedMotion) {
-        particles = Array.from({ length: 60 }, () => {
-          const a = Math.random() * Math.PI * 2, v = 2 + Math.random() * 5;
-          return {
-            x: qc.x, y: qc.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 2,
-            r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4,
-            w: 5 + Math.random() * 5, h: 3 + Math.random() * 4,
-            c: CONFETTI[(Math.random() * CONFETTI.length) | 0], life: 1,
-          };
-        });
-      }
+    const labelT = t >= 1 ? Math.min(1, (elapsed - ZOOM_MS) / 350) : 0;
+    // Les confettis sont créés une seule fois, quand le zoom est terminé
+    if (t >= 1 && !particles && !reducedMotion) {
+      const qc = { x: W / 2, y: H / 2 };
+      particles = Array.from({ length: 60 }, () => {
+        const a = Math.random() * Math.PI * 2, v = 2 + Math.random() * 5;
+        return {
+          x: qc.x, y: qc.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 2,
+          r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4,
+          w: 5 + Math.random() * 5, h: 3 + Math.random() * 4,
+          c: CONFETTI[(Math.random() * CONFETTI.length) | 0], life: 1,
+        };
+      });
     }
-    if (particles) {
-      for (const p of particles) {
-        p.vy += 0.15;                 // gravité
-        p.vx *= 0.985;                // frottement de l'air
-        p.x += p.vx; p.y += p.vy; p.r += p.vr;
-        p.life -= 0.008;
-        if (p.life <= 0) continue;
-        octx.save();
-        octx.globalAlpha = Math.min(1, p.life * 2);
-        octx.translate(p.x, p.y);
-        octx.rotate(p.r);
-        octx.fillStyle = p.c;
-        octx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        octx.restore();
-      }
-    }
-    // On anime pendant 3 s (zoom + confettis + quelques pulsations), puis on s'arrête :
-    // la dernière image reste affichée, et le processeur peut se reposer.
+    drawScene(easeOutBack(t), labelT, 0.5 + 0.5 * Math.sin(elapsed / 180));
+    // On anime pendant 3 s, puis on s'arrête : la dernière image reste affichée,
+    // et le processeur peut se reposer.
     if (elapsed < 3000) animId = requestAnimationFrame(frame);
+    else { particles = null; drawScene(1, 1, 0.5); }
   }
   animId = requestAnimationFrame(frame);
 }
 
+/* Zoom / dézoom à la demande : un toucher sur le viseur bascule entre
+   « zoomé sur le QR » et « image entière » (le QR reste encadré dans les deux cas). */
+function toggleZoom() {
+  if (!view || !vf.classList.contains("found") || view.k < 1.15) return;
+  cancelAnimationFrame(animId);
+  particles = null;
+  const from = view.e, to = view.e > 0.5 ? 0 : 1;
+  const MS = reducedMotion ? 0 : 450;
+  const t0 = performance.now();
+  function frame(now) {
+    const t = MS ? Math.min(1, (now - t0) / MS) : 1;
+    view.e = from + (to - from) * easeInOut(t);
+    drawScene(view.e, 1, 0.5);
+    if (t < 1) animId = requestAnimationFrame(frame);   // s'arrête dès que c'est fini
+  }
+  animId = requestAnimationFrame(frame);
+  $("zoomHint").textContent = to ? "Toucher pour dézoomer" : "Toucher pour zoomer";
+}
+vf.addEventListener("click", toggleZoom);
+
 /* ---------- Petit « ding » (synthétisé, pas de fichier son) ---------- */
 let audio = null;
-let soundOn = true;
-try { soundOn = localStorage.getItem("qr-sound") !== "off"; } catch (e) {}
+let soundOn = false;
+try { soundOn = localStorage.getItem("qr-sound") === "on"; } catch (e) {} // coupé par défaut
 function updateSoundBtn() {
   $("sound").textContent = soundOn ? "son : oui" : "son : non";
   $("sound").setAttribute("aria-pressed", String(soundOn));
