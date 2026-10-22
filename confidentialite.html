@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecteur QR – Confidentialité</title>
+<!-- Page exigée par Google Play : elle explique quelles données l'appli utilise.
+     Elle doit rester en ligne tant que l'appli est publiée. -->
+<style>
+  :root { --bg: #f2f7f7; --ink: #10292c; --muted: #4d6669; --accent: #0f8f84; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #06343a; --ink: #e6f7f5; --muted: #9fc4c0; --accent: #2edecc; color-scheme: dark; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, sans-serif;
+         padding: 32px max(16px, env(safe-area-inset-left, 0px)); }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 28px 0 6px; color: var(--accent); }
+  p, li { color: var(--ink); }
+  .date { color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Politique de confidentialité – Lecteur QR</h1>
+  <p class="date">Dernière mise à jour : 22 octobre 2026</p>
+
+  <h2>En bref</h2>
+  <p>Lecteur QR ne collecte, ne stocke sur un serveur et ne partage aucune donnée personnelle. Tout le traitement se fait sur ton téléphone.</p>
+
+  <h2>Caméra</h2>
+  <p>L'appli utilise la caméra uniquement pour lire des QR codes. Les images sont analysées en direct sur l'appareil, puis oubliées : elles ne sont ni enregistrées, ni envoyées.</p>
+
+  <h2>Photos de la galerie</h2>
+  <p>Si tu choisis une photo, elle est lue sur l'appareil pour y chercher un QR code. Elle n'est ni copiée ni transmise.</p>
+
+  <h2>Historique</h2>
+  <p>Les 30 derniers contenus scannés sont gardés dans le stockage local du téléphone pour ton confort. Ils ne quittent jamais l'appareil. Le bouton « Effacer » les supprime.</p>
+
+  <h2>Réseau</h2>
+  <p>L'appli se connecte à internet seulement pour se mettre à jour, charger ses polices de caractères et ouvrir les liens que tu choisis d'ouvrir. Aucune statistique, aucune publicité, aucun traceur.</p>
+
+  <h2>Contact</h2>
+  <p>Pour toute question : via le dépôt GitHub <a href="https://github.com/svaug12345/QR">github.com/svaug12345/QR</a>.</p>
+</main>
+</body>
+</html>

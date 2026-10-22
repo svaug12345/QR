@@ -1,4 +1,5 @@
 {
+  "id": "./",
   "name": "Lecteur QR",
   "short_name": "Lecteur QR",
   "description": "Scanner de QR codes : caméra live ou photo de la galerie.",
@@ -28,5 +29,9 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "categories": [
+    "utilities",
+    "productivity"
   ]
 }
