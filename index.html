@@ -468,8 +468,9 @@ function celebrate(el, iw, ih, pts) {
         octx.restore();
       }
     }
-    // L'animation continue (pour le contour qui pulse) jusqu'au prochain scan
-    animId = requestAnimationFrame(frame);
+    // On anime pendant 3 s (zoom + confettis + quelques pulsations), puis on s'arrête :
+    // la dernière image reste affichée, et le processeur peut se reposer.
+    if (elapsed < 3000) animId = requestAnimationFrame(frame);
   }
   animId = requestAnimationFrame(frame);
 }
@@ -561,9 +562,10 @@ async function startCamera() {
   resetView();
   $("result").hidden = true;
   try {
-    // facingMode "environment" = caméra arrière ; on demande une bonne résolution
+    // facingMode "environment" = caméra arrière.
+    // 720 px suffisent largement pour un QR code, et ça chauffe beaucoup moins que 1280.
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 1280 } },
+      video: { facingMode: "environment", width: { ideal: 720 }, height: { ideal: 720 } },
     });
   } catch (err) {
     idle.hidden = false;
@@ -582,15 +584,26 @@ async function startCamera() {
   $("live").textContent = "Arrêter";
   setStatus("Vise le QR code…");
   looping = true;
+  scanStarted = Date.now();
   scanLoop();
 }
 
-// Boucle : on analyse une image vidéo toutes les ~150 ms
+// Boucle : on analyse une image vidéo toutes les ~250 ms (4 fois par seconde, c'est assez)
+const IDLE_LIMIT = 45000;      // au bout de 45 s sans QR, on met la caméra en pause
+let scanStarted = 0;
 async function scanLoop() {
   if (!looping || !video) return;
+  if (Date.now() - scanStarted > IDLE_LIMIT) {
+    stopCamera();
+    idle.hidden = false;
+    idle.querySelector("span").textContent = "Caméra en pause";
+    $("live").textContent = "Relancer la caméra";
+    setStatus("Caméra mise en pause pour économiser la batterie.");
+    return;
+  }
   if (video.readyState >= 2) {
     const vw = video.videoWidth, vh = video.videoHeight;
-    const res = await decode(video, vw, vh, 640);
+    const res = await decode(video, vw, vh, 480); // image réduite = analyse plus légère
     if (res && looping) {
       // On « photographie » l'image vidéo exacte où le QR a été lu, pour la figer
       const snap = document.createElement("canvas");
@@ -604,7 +617,7 @@ async function scanLoop() {
       return;
     }
   }
-  setTimeout(scanLoop, 150);
+  setTimeout(scanLoop, 250);
 }
 
 function stopCamera() {
@@ -724,6 +737,20 @@ renderHistory();
 
 // Au chargement : la caméra live démarre toute seule
 startCamera();
+
+// Quand tu quittes l'appli (écran éteint, autre appli…), la page devient « cachée » :
+// on coupe la caméra. Elle redémarre à ton retour, si elle tournait avant.
+let resumeOnReturn = false;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    resumeOnReturn = looping;
+    stopCamera();
+    cancelAnimationFrame(animId);
+  } else if (resumeOnReturn) {
+    resumeOnReturn = false;
+    startCamera();
+  }
+});
 
 // Enregistre le service worker (sw.js) : rend l'appli installable et utilisable hors ligne
 if ("serviceWorker" in navigator) {

@@ -9,7 +9,7 @@
    ===================================================================== */
 
 // Change ce numéro à chaque grosse mise à jour pour repartir d'un cache propre
-const CACHE = "lecteur-qr-v1";
+const CACHE = "lecteur-qr-v2";
 
 // Fichiers mis en cache dès l'installation
 const FILES = [
