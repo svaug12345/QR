@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0c1120">
+<title>Lecteur QR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=Figtree:wght@400;500;600&display=swap">
+
+<!-- jsQR : petite librairie qui décode un QR code à partir des pixels d'une image.
+     On s'en sert en secours quand le téléphone n'a pas de détecteur natif. -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
+<style>
+/* Mise en page : une seule colonne façon appli, viseur en haut, résultat juste dessous, historique en bas. */
+:root {
+  --bg: #eef1f6;        /* fond : gris légèrement bleuté */
+  --surface: #ffffff;   /* cartes */
+  --ink: #141a2b;       /* texte principal */
+  --muted: #5d6680;     /* texte secondaire */
+  --line: #d6dbe6;      /* bordures fines */
+  --accent: #2b50e0;    /* bleu cobalt : boutons, coins du viseur */
+  --accent-ink: #ffffff;
+  --ok: #1d8a5a;        /* vert « code trouvé » */
+  --warn: #b5541c;      /* orange pour les erreurs */
+  --viewfinder: #10162a;/* fond du viseur (toujours sombre) */
+
+  --f-display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+  --f-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+/* Thème sombre : on ne redéfinit que les couleurs (les « tokens »). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1120; --surface: #161d31; --ink: #e9ecf5; --muted: #98a1bb;
+    --line: #283149; --accent: #6f8bff; --accent-ink: #0c1120;
+    --ok: #4cc58f; --warn: #f0965c; --viewfinder: #05080f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1120; --surface: #161d31; --ink: #e9ecf5; --muted: #98a1bb;
+  --line: #283149; --accent: #6f8bff; --accent-ink: #0c1120;
+  --ok: #4cc58f; --warn: #f0965c; --viewfinder: #05080f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+img { max-width: 100%; }
+body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.app { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.75rem; letter-spacing: -0.02em; margin: 0; }
+.tag { font-family: var(--f-mono); font-size: .75rem; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+
+/* ---------- Viseur ---------- */
+.viewfinder {
+  position: relative; aspect-ratio: 1 / 1; max-width: 100%;
+  background: var(--viewfinder); border-radius: 20px; overflow: hidden;
+  display: grid; place-items: center;
+}
+.viewfinder video, .viewfinder img.preview {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+/* Les 4 coins du cadre de visée */
+.frame { position: absolute; inset: 18%; pointer-events: none; }
+.frame i { position: absolute; width: 28px; height: 28px; border: 3px solid var(--accent); }
+.frame i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 8px; }
+.frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 8px; }
+.frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 8px; }
+.frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 8px; }
+.viewfinder.found .frame i { border-color: var(--ok); }
+/* Ligne de balayage animée pendant le scan caméra */
+.scanline {
+  position: absolute; left: 18%; right: 18%; height: 2px; top: 18%;
+  background: var(--accent); box-shadow: 0 0 12px var(--accent); opacity: .85;
+  animation: sweep 2.2s ease-in-out infinite alternate;
+}
+@keyframes sweep { to { top: 82%; } }
+@media (prefers-reduced-motion: reduce) { .scanline { animation: none; top: 50%; } }
+
+.idle { position: relative; text-align: center; color: #c7cee3; padding: 0 24%; font-size: .95rem; }
+.idle svg { width: 56px; height: 56px; display: block; margin: 0 auto 10px; opacity: .8; }
+
+/* ---------- Boutons ---------- */
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button, .btn {
+  font: 600 1rem var(--f-body); border-radius: 14px; padding: 14px 16px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none;
+}
+button.primary, .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+button:focus-visible, .btn:focus-visible, label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+button:active, .btn:active { transform: translateY(1px); }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+.status { font-size: .9rem; color: var(--muted); min-height: 1.5em; margin: -8px 0 0; }
+.status.err { color: var(--warn); }
+
+/* ---------- Résultat ---------- */
+.result {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+  padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.result .kind { font-family: var(--f-mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ok); }
+.result .content {
+  font-family: var(--f-mono); font-size: .95rem; word-break: break-word; white-space: pre-wrap;
+  margin: 0; min-width: 0; user-select: all;
+}
+.result .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.result .row > * { flex: 1 1 140px; padding: 11px 14px; font-size: .95rem; }
+
+/* ---------- Historique ---------- */
+h2 { font-family: var(--f-display); font-weight: 500; font-size: 1.1rem; margin: 0; }
+.hist-head { display: flex; justify-content: space-between; align-items: center; }
+.hist-head button { padding: 6px 12px; font-size: .85rem; border-radius: 10px; }
+ul.history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+ul.history li { border-bottom: 1px solid var(--line); }
+ul.history button {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer; padding: 12px 2px;
+  display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: baseline;
+}
+ul.history button:focus-visible { outline: 2px solid var(--accent); }
+.h-text { font-family: var(--f-mono); font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.h-time { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.example { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-left: 6px; font-family: var(--f-body); }
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Lecteur QR</h1>
+    <span class="tag">scan · copie · ouvre</span>
+  </header>
+
+  <!-- Le viseur : affiche la vidéo de la caméra, ou la photo choisie -->
+  <div class="viewfinder" id="vf">
+    <div class="idle" id="idle">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/>
+        <rect x="8" y="8" width="3" height="3"/><rect x="13" y="8" width="3" height="3"/><rect x="8" y="13" width="3" height="3"/><path d="M13 13h3v3"/>
+      </svg>
+      Démarrage de la caméra…
+    </div>
+    <div class="frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  </div>
+
+  <div class="actions">
+    <!-- Pas d'attribut « capture » : le téléphone ouvre la galerie pour choisir une photo existante -->
+    <label class="btn" for="photo">
+      Galerie
+      <input type="file" id="photo" accept="image/*">
+    </label>
+    <button id="live" class="primary" type="button">Caméra live</button>
+  </div>
+  <p class="status" id="status" role="status"></p>
+
+  <!-- Carte de résultat (cachée tant qu'aucun code n'est lu) -->
+  <section class="result" id="result" hidden>
+    <span class="kind" id="kind">Texte</span>
+    <p class="content" id="content"></p>
+    <div class="row">
+      <button id="copy" type="button">Copier</button>
+      <a class="btn primary" id="open" target="_blank" rel="noopener" hidden>Ouvrir le lien</a>
+    </div>
+  </section>
+
+  <section>
+    <div class="hist-head">
+      <h2>Historique</h2>
+      <button id="clear" type="button">Effacer</button>
+    </div>
+    <ul class="history" id="history"></ul>
+  </section>
+</div>
+
+<script>
+/* =====================================================================
+   LECTEUR QR — fonctionnement général
+   1. On récupère une image (photo prise par le téléphone, ou image vidéo).
+   2. On cherche un QR code dedans :
+        - d'abord avec BarcodeDetector (détecteur intégré à Chrome Android, rapide)
+        - sinon avec jsQR (librairie JavaScript, marche partout)
+   3. On affiche le contenu, on propose « Copier » / « Ouvrir », et on
+      l'ajoute à l'historique (gardé dans le navigateur avec localStorage).
+   ===================================================================== */
+
+// Raccourci pour attraper un élément par son id
+const $ = (id) => document.getElementById(id);
+const vf = $("vf"), idle = $("idle"), statusEl = $("status");
+
+/* ---------- Détecteur natif (si le téléphone en a un) ---------- */
+let nativeDetector = null;
+if ("BarcodeDetector" in window) {
+  try { nativeDetector = new BarcodeDetector({ formats: ["qr_code"] }); } catch (e) { /* pas dispo */ }
+}
+
+/* Un canvas « de travail » invisible : on y dessine l'image pour lire ses pixels */
+const work = document.createElement("canvas");
+const ctx = work.getContext("2d", { willReadFrequently: true });
+
+/**
+ * Cherche un QR code dans une source (image ou vidéo).
+ * maxSide : on réduit l'image à cette taille max, car une photo de 12 Mpx
+ * serait très lente à analyser, et un QR code reste lisible en plus petit.
+ * Renvoie le texte trouvé, ou null.
+ */
+async function decode(source, w, h, maxSide = 1000) {
+  // 1) Détecteur natif : on lui donne directement la source
+  if (nativeDetector) {
+    try {
+      const codes = await nativeDetector.detect(source);
+      if (codes.length) return codes[0].rawValue;
+    } catch (e) { /* on passe au plan B */ }
+  }
+  // 2) jsQR : il veut un tableau de pixels RGBA
+  if (typeof jsQR !== "function") return null;
+  const scale = Math.min(1, maxSide / Math.max(w, h));
+  work.width = Math.round(w * scale);
+  work.height = Math.round(h * scale);
+  ctx.drawImage(source, 0, 0, work.width, work.height);
+  const px = ctx.getImageData(0, 0, work.width, work.height);
+  // attemptBoth : essaie aussi en couleurs inversées (QR blanc sur fond noir)
+  const code = jsQR(px.data, px.width, px.height, { inversionAttempts: "attemptBoth" });
+  return code ? code.data : null;
+}
+
+/* ---------- Mode 1 : photo ---------- */
+$("photo").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  stopCamera();
+  setStatus("Analyse de la photo…");
+  const img = new Image();
+  img.className = "preview";
+  img.src = URL.createObjectURL(file);           // URL temporaire vers la photo
+  await img.decode();                             // attend que l'image soit chargée
+  showInViewfinder(img);
+
+  // On essaie à plusieurs tailles : parfois un QR petit dans la photo
+  // n'est lisible qu'en gardant plus de résolution.
+  let text = null;
+  for (const size of [1000, 1600, 2400]) {
+    text = await decode(img, img.naturalWidth, img.naturalHeight, size);
+    if (text) break;
+  }
+  e.target.value = "";                            // permet de reprendre la même photo
+  text ? found(text) : setStatus("Aucun QR code trouvé. Rapproche-toi et évite les reflets.", true);
+});
+
+/* ---------- Mode 2 : caméra en direct ---------- */
+let stream = null, video = null, looping = false;
+
+$("live").addEventListener("click", () => (stream ? stopCamera() : startCamera()));
+
+async function startCamera() {
+  if (stream) return;
+  $("result").hidden = true;
+  try {
+    // facingMode "environment" = caméra arrière
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (err) {
+    idle.hidden = false;
+    idle.lastChild.textContent = "Caméra indisponible";
+    setStatus("Impossible d'accéder à la caméra. Autorise-la dans le navigateur, ou utilise « Galerie ».", true);
+    return;
+  }
+  video = document.createElement("video");
+  video.setAttribute("playsinline", "");          // indispensable sur iPhone
+  video.muted = true;
+  video.srcObject = stream;
+  await video.play();
+  showInViewfinder(video);
+  const line = document.createElement("div");
+  line.className = "scanline";
+  vf.appendChild(line);
+  $("live").textContent = "Arrêter";
+  setStatus("Vise le QR code…");
+  looping = true;
+  scanLoop();
+}
+
+// Boucle : on analyse une image vidéo toutes les ~200 ms
+async function scanLoop() {
+  if (!looping || !video) return;
+  if (video.readyState >= 2) {
+    const text = await decode(video, video.videoWidth, video.videoHeight, 640);
+    if (text) { found(text); stopCamera(true); $("live").textContent = "Scanner à nouveau"; return; }
+  }
+  setTimeout(scanLoop, 200);
+}
+
+function stopCamera(keepFrame = false) {
+  looping = false;
+  if (stream) stream.getTracks().forEach((t) => t.stop());   // éteint vraiment la caméra
+  stream = null;
+  $("live").textContent = "Caméra live";
+  vf.querySelector(".scanline")?.remove();
+  if (!keepFrame) video?.remove();
+}
+
+/* ---------- Affichage ---------- */
+function showInViewfinder(el) {
+  vf.classList.remove("found");
+  vf.querySelectorAll("video, img.preview").forEach((n) => n !== el && n.remove());
+  idle.hidden = true;
+  vf.prepend(el);
+}
+
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle("err", isError);
+}
+
+// Devine le type de contenu pour adapter l'étiquette et le bouton
+function classify(text) {
+  if (/^https?:\/\//i.test(text)) return { kind: "Lien", url: text };
+  if (/^WIFI:/i.test(text)) {
+    // Format WiFi standard : WIFI:T:WPA;S:NomDuReseau;P:MotDePasse;;
+    const ssid = (text.match(/S:([^;]*)/) || [])[1] || "?";
+    const pass = (text.match(/P:([^;]*)/) || [])[1] || "";
+    return { kind: "Wi-Fi", display: `Réseau : ${ssid}\nMot de passe : ${pass}`, copy: pass };
+  }
+  if (/^mailto:/i.test(text)) return { kind: "E-mail", display: text.slice(7) };
+  if (/^tel:/i.test(text)) return { kind: "Téléphone", display: text.slice(4) };
+  if (/^BEGIN:VCARD/i.test(text)) return { kind: "Contact" };
+  return { kind: "Texte" };
+}
+
+let currentCopy = "";
+function showResult(text) {
+  const info = classify(text);
+  $("kind").textContent = info.kind;
+  $("content").textContent = info.display || text;
+  currentCopy = info.copy || info.display || text;
+  $("copy").textContent = info.kind === "Wi-Fi" ? "Copier le mot de passe" : "Copier";
+  const open = $("open");
+  open.hidden = !info.url;
+  if (info.url) open.href = info.url;
+  $("result").hidden = false;
+}
+
+function found(text) {
+  vf.classList.add("found");
+  if (navigator.vibrate) navigator.vibrate(60);   // petite vibration de confirmation
+  setStatus("Code lu ✓");
+  showResult(text);
+  addToHistory(text);
+}
+
+/* ---------- Copier ---------- */
+$("copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(currentCopy);
+    setStatus("Copié dans le presse-papiers");
+  } catch (e) {
+    // Plan B : on sélectionne le texte pour que tu puisses faire « Copier » à la main
+    const range = document.createRange();
+    range.selectNodeContents($("content"));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    setStatus("Texte sélectionné : appuie longuement pour copier");
+  }
+});
+
+/* ---------- Historique (stocké dans ce navigateur uniquement) ---------- */
+const KEY = "qr-history";
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; }
+}
+function saveHistory(list) {
+  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) { /* stockage indisponible */ }
+}
+let history = loadHistory() || [];
+
+function addToHistory(text) {
+  history = history.filter((h) => !h.example && h.text !== text);  // pas de doublon
+  history.unshift({ text, t: Date.now() });
+  history = history.slice(0, 30);                                   // 30 derniers max
+  saveHistory(history);
+  renderHistory();
+}
+
+function renderHistory() {
+  const ul = $("history");
+  ul.innerHTML = "";
+  if (!history.length) {
+    ul.innerHTML = '<li style="padding:12px 2px;color:var(--muted)">Rien pour l’instant.</li>';
+    return;
+  }
+  for (const h of history) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    const t = new Date(h.t);
+    const span = document.createElement("span");
+    span.className = "h-text";
+    span.textContent = h.text;                    // textContent : pas d'injection HTML possible
+    if (h.example) span.insertAdjacentHTML("beforeend", '<span class="example">exemple</span>');
+    const time = document.createElement("span");
+    time.className = "h-time";
+    time.textContent = t.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " " +
+                       t.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    b.append(span, time);
+    b.addEventListener("click", () => { showResult(h.text); setStatus(""); });
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+}
+
+$("clear").addEventListener("click", () => { history = []; saveHistory(history); renderHistory(); });
+
+renderHistory();
+
+// Au chargement : la caméra live démarre toute seule
+startCamera();
+</script>
+
+</body>
+</html>
