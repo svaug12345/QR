@@ -1,6 +1,6 @@
 {
   "id": "./",
-  "name": "Lecteur QR",
+  "name": "Lecteur QR code",
   "short_name": "Lecteur QR",
   "description": "Scanner de QR codes : caméra live ou photo de la galerie.",
   "lang": "fr",
