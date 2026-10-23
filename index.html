@@ -187,9 +187,95 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
   .scanline, .viewfinder.scanning .frame, .viewfinder.nope, .result.show { animation: none; }
   .scanline { top: 50%; }
 }
+
+/* =====================================================================
+   ÉCRAN DE LANCEMENT (« splash ») — animation de ~1,6 s à l'ouverture.
+   Il couvre tout l'écran, rejoue l'icône de l'appli, puis s'efface.
+   La caméra démarre déjà en dessous pendant ce temps : on ne perd rien.
+   ===================================================================== */
+.splash {
+  position: fixed; inset: 0; z-index: 1000;        /* par-dessus tout */
+  background: #06343a;                             /* même vert foncé que l'icône */
+  display: grid; place-items: center; align-content: center; gap: 18px;
+  /* Disparition : fondu + léger zoom, lancé après 1,3 s */
+  animation: splash-out .45s ease-in 1.3s forwards;
+}
+.splash svg { width: 132px; height: 132px; overflow: visible; }
+.splash p {
+  margin: 0; color: #c9fff2; font: 700 1.3rem var(--f-display); letter-spacing: -.02em;
+  opacity: 0; animation: rise .4s ease-out .75s forwards;   /* le titre arrive en dernier */
+}
+
+/* Les 4 coins du viseur glissent depuis l'extérieur vers leur place */
+.splash .corner { opacity: 0; animation: corner-in .45s cubic-bezier(.2,1.4,.4,1) forwards; }
+.splash .c1 { --dx: -14px; --dy: -14px; }   /* haut-gauche : vient d'en haut à gauche */
+.splash .c2 { --dx:  14px; --dy: -14px; }
+.splash .c3 { --dx: -14px; --dy:  14px; }
+.splash .c4 { --dx:  14px; --dy:  14px; }
+
+/* Les carrés du QR « poppent » un par un (le délai est donné dans le HTML via --d) */
+.splash .px {
+  transform-box: fill-box; transform-origin: center;   /* chaque carré grossit depuis son centre */
+  transform: scale(0); animation: pop .3s cubic-bezier(.3,1.6,.5,1) var(--d) forwards;
+}
+
+/* Le trait de scan descend une fois de haut en bas */
+.splash .scan { opacity: 0; animation: scan .6s ease-in-out .55s forwards; }
+
+@keyframes corner-in { from { opacity: 0; transform: translate(var(--dx), var(--dy)); } to { opacity: 1; transform: none; } }
+@keyframes pop       { to { transform: scale(1); } }
+@keyframes scan      { 0% { opacity: 0; transform: translateY(0); } 15% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; transform: translateY(64px); } }
+@keyframes rise      { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes splash-out { to { opacity: 0; transform: scale(1.06); visibility: hidden; } }
+
+/* Accessibilité : si le téléphone demande « moins d'animations », on montre l'écran
+   sans mouvement et on l'efface plus vite. */
+@media (prefers-reduced-motion: reduce) {
+  .splash, .splash * { animation-duration: .01s !important; animation-delay: 0s !important; }
+  .splash { animation: splash-out .2s linear .5s forwards !important; }
+}
 </style>
 </head>
 <body>
+<!-- Écran de lancement : l'icône de l'appli dessinée en SVG (dessin vectoriel),
+     chaque morceau a sa propre animation définie dans le CSS ci-dessus. -->
+<div class="splash" id="splash" aria-hidden="true">
+  <svg viewBox="0 0 120 120">
+    <!-- 4 coins du viseur (couleur turquoise de l'icône) -->
+    <g fill="none" stroke="#2fe0c8" stroke-width="7" stroke-linecap="square">
+      <path class="corner c1" d="M8 30V8h22"/>
+      <path class="corner c2" d="M90 8h22v22" style="animation-delay:.08s"/>
+      <path class="corner c3" d="M8 90v22h22" style="animation-delay:.16s"/>
+      <path class="corner c4" d="M112 90v22H90" style="animation-delay:.24s"/>
+    </g>
+    <!-- Les 3 « yeux » du QR code : cadre clair + centre turquoise.
+         --d = délai avant l'apparition, pour un effet en cascade. -->
+    <g>
+      <rect class="px" style="--d:.30s" x="34" y="34" width="22" height="22" fill="none" stroke="#c9fff2" stroke-width="4"/>
+      <rect class="px" style="--d:.36s" x="41" y="41" width="8" height="8" fill="#2fe0c8"/>
+      <rect class="px" style="--d:.40s" x="64" y="34" width="22" height="22" fill="none" stroke="#c9fff2" stroke-width="4"/>
+      <rect class="px" style="--d:.46s" x="71" y="41" width="8" height="8" fill="#2fe0c8"/>
+      <rect class="px" style="--d:.50s" x="34" y="64" width="22" height="22" fill="none" stroke="#c9fff2" stroke-width="4"/>
+      <rect class="px" style="--d:.56s" x="41" y="71" width="8" height="8" fill="#2fe0c8"/>
+      <!-- Petits pixels en damier, en bas à droite -->
+      <rect class="px" style="--d:.60s" x="64" y="64" width="7" height="7" fill="#2fe0c8"/>
+      <rect class="px" style="--d:.64s" x="79" y="64" width="7" height="7" fill="#c9fff2"/>
+      <rect class="px" style="--d:.68s" x="71.5" y="71.5" width="7" height="7" fill="#c9fff2"/>
+      <rect class="px" style="--d:.72s" x="64" y="79" width="7" height="7" fill="#c9fff2"/>
+      <rect class="px" style="--d:.76s" x="79" y="79" width="7" height="7" fill="#2fe0c8"/>
+    </g>
+    <!-- Trait de scan qui balaie le QR une fois -->
+    <rect class="scan" x="26" y="28" width="68" height="3" rx="1.5" fill="#2fe0c8"/>
+  </svg>
+  <p>Lecteur QR code</p>
+</div>
+<script>
+  // Quand l'animation de sortie est finie, on retire l'écran de la page
+  // pour qu'il ne bloque plus les doigts (sinon il resterait invisible par-dessus).
+  document.getElementById("splash").addEventListener("animationend", (e) => {
+    if (e.animationName === "splash-out") e.currentTarget.remove();
+  });
+</script>
 <div class="app">
   <header>
     <h1>Lecteur <span>QR</span> code</h1>
