@@ -899,7 +899,12 @@ function showResult(text) {
   $("copy").textContent = info.kind === "Wi-Fi" ? "Copier le mot de passe" : "Copier";
   const open = $("open");
   open.hidden = !info.url;
-  if (info.url) open.href = info.url;
+  if (info.url) {
+    open.href = externalHref(info.url);
+    // Dans l'appli Android, le lien « intent: » doit s'ouvrir dans la page elle-même (_self) :
+    // c'est Android qui intercepte et lance le navigateur. Sur le web, on garde un nouvel onglet.
+    open.target = IN_ANDROID_APP ? "_self" : "_blank";
+  }
   const card = $("result");
   card.hidden = false;
   card.classList.remove("show"); void card.offsetWidth; card.classList.add("show"); // rejoue l'animation
@@ -911,6 +916,46 @@ function found(text) {
   setStatus("QR code lu ✓");
   showResult(text);
   addToHistory(text);
+}
+
+/* =====================================================================
+   OUVRIR LES LIENS DANS LE NAVIGATEUR PAR DÉFAUT
+   Dans l'appli Play Store (une « TWA »), un lien vers un autre site s'ouvre
+   par défaut dans un onglet superposé à l'appli (« Custom Tab »).
+   Pour l'envoyer au vrai navigateur du téléphone, on le transforme en lien
+   « intent: » : c'est une demande adressée à Android lui-même, du type
+   « ouvre cette adresse avec l'appli prévue pour ça ».
+   ===================================================================== */
+
+// Comment savoir qu'on tourne dans l'appli Android ? Au lancement, Android indique
+// d'où vient la visite : document.referrer commence alors par « android-app:// ».
+// On le mémorise, car le referrer disparaît si la page se recharge.
+let IN_ANDROID_APP = document.referrer.startsWith("android-app://");
+try {
+  if (IN_ANDROID_APP) sessionStorage.setItem("in-app", "1");
+  else IN_ANDROID_APP = sessionStorage.getItem("in-app") === "1";
+} catch (e) { /* stockage indisponible : on se contente du referrer */ }
+
+/**
+ * Transforme https://exemple.fr/page?x=1 en
+ * intent://exemple.fr/page?x=1#Intent;scheme=https;action=android.intent.action.VIEW;...;end
+ * - action VIEW + catégorie BROWSABLE = « affiche cette page web »
+ * - browser_fallback_url = adresse de secours si Android ne trouve rien
+ * Hors de l'appli Android (navigateur, PC), on renvoie le lien tel quel.
+ */
+function externalHref(url) {
+  if (!IN_ANDROID_APP) return url;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return url;
+    return "intent://" + u.host + u.pathname + u.search +
+      "#Intent;scheme=" + u.protocol.replace(":", "") +
+      ";action=android.intent.action.VIEW" +
+      ";category=android.intent.category.BROWSABLE" +
+      ";S.browser_fallback_url=" + encodeURIComponent(url) + ";end";
+  } catch (e) {
+    return url;                       // adresse mal formée : on ne touche à rien
+  }
 }
 
 /* ---------- Copier ---------- */
