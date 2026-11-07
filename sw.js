@@ -9,7 +9,7 @@
    ===================================================================== */
 
 // Change ce numéro à chaque grosse mise à jour pour repartir d'un cache propre
-const CACHE = "lecteur-qr-v6";
+const CACHE = "lecteur-qr-v7"; // v7 = appli v1.1 (Partager + avis)
 
 // Fichiers mis en cache dès l'installation
 const FILES = [

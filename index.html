@@ -182,6 +182,13 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
 .h-text { font-family: var(--f-mono); font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .h-time { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
+/* ---------- Pied de page (v1.1) ---------- */
+.foot {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: .8rem; color: var(--muted); padding: 4px 2px 12px;
+}
+.foot a { color: var(--muted); }
+
 /* Si le téléphone demande moins d'animations, on les coupe */
 @media (prefers-reduced-motion: reduce) {
   .scanline, .viewfinder.scanning .frame, .viewfinder.nope, .result.show { animation: none; }
@@ -319,6 +326,8 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
     <p class="content" id="content"></p>
     <div class="row">
       <button id="copy" type="button">Copier</button>
+      <!-- Nouveau (v1.1) : envoie le contenu lu vers une autre appli (WhatsApp, SMS, mail…) -->
+      <button id="share" type="button" hidden>Partager</button>
       <a class="btn primary" id="open" target="_blank" rel="noopener" hidden>Ouvrir le lien</a>
     </div>
   </section>
@@ -330,6 +339,13 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
     </div>
     <ul class="history" id="history"></ul>
   </section>
+
+  <!-- Pied de page (v1.1) : version de l'appli + lien pour laisser un avis sur le Play Store -->
+  <footer class="foot">
+    <span id="version"></span>
+    <a id="feedback" href="https://play.google.com/store/apps/details?id=io.github.svaug12345.lecteurqr"
+       target="_blank" rel="noopener">Donner mon avis</a>
+  </footer>
 </div>
 
 <script>
@@ -345,6 +361,10 @@ ul.history button:focus-visible { outline: 2px solid var(--accent); }
    ===================================================================== */
 
 const $ = (id) => document.getElementById(id);
+
+// Numéro de version affiché en bas de l'appli.
+// À augmenter à chaque mise à jour (et à garder identique au « versionName » du Play Store).
+const APP_VERSION = "1.1";
 const vf = $("vf"), stage = $("stage"), overlay = $("overlay"), idle = $("idle"), statusEl = $("status");
 const octx = overlay.getContext("2d");
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -971,6 +991,30 @@ $("copy").addEventListener("click", async () => {
     setStatus("Texte sélectionné : appuie longuement pour copier");
   }
 });
+
+/* ---------- Partager (v1.1) ----------
+   navigator.share ouvre le menu de partage natif d'Android
+   (le même que dans la galerie photo). Il n'existe pas partout
+   (ex. Firefox sur PC) : dans ce cas le bouton reste caché. */
+if (navigator.share) $("share").hidden = false;
+
+$("share").addEventListener("click", async () => {
+  // Pour un Wi-Fi, on partage le texte lisible (réseau + mot de passe) plutôt que le code brut
+  const text = $("content").textContent;
+  try {
+    await navigator.share({ title: "QR code lu", text });
+  } catch (e) {
+    // L'utilisateur a fermé le menu de partage (AbortError) : ce n'est pas une erreur
+    if (e.name !== "AbortError") setStatus("Partage impossible", true);
+  }
+});
+
+/* ---------- Pied de page (v1.1) ---------- */
+$("version").textContent = "v" + APP_VERSION;
+// Dans l'appli Android, le lien Play Store passe par un « intent » pour ouvrir l'appli Play Store
+// elle-même (même astuce que pour les liens scannés, voir externalHref plus haut).
+$("feedback").href = externalHref($("feedback").href);
+if (IN_ANDROID_APP) $("feedback").target = "_self";
 
 /* =====================================================================
    HISTORIQUE (stocké dans ce navigateur uniquement)
